@@ -15,7 +15,7 @@ $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 test: $(TARGET)
-	./tests/test_builtins.sh
+	SHELL_BIN=./$(TARGET) sh tests/test_builtins.sh
 
 clean:
 	rm -f $(OBJS) $(TARGET)
