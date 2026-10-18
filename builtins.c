@@ -203,7 +203,7 @@ static int builtin_help(char **argv, shell_state_t *state) {
     for (size_t i = 0; i < NUM_BUILTINS; i++) {
         printf("  %s\n", BUILTINS[i].usage);
     }
-    printf("Other commands are run as external programs found via PATH.\n");
+    printf("External command execution will be added in a later stage.\n");
     return 0;
 }
 
