@@ -143,6 +143,34 @@ check "TC-PARSE-04 256 quoted expansions all expand" \
 check "TC-PARSE-04 shell still works after a 300-token line" \
     "echo $many_args${NL}echo ok" "ok" "tail -n 1"
 
+# Long input: NFR-08 / AC-10 require a 4096-character line to be handled
+# without crashing or overflowing (TC-QUAL-02)
+repeat() { printf "%${2}s" "" | tr ' ' "$1"; }
+
+word_4091=$(repeat a 4091)             # "echo " + 4091 chars = 4096-char line
+word_4096=$(repeat b 4096)
+half=$(repeat c 2043)                  # quoted 4096-char line with spaces
+line_4096="echo $word_4091"
+quoted_4096="echo \"$half   $half\""
+export LONG_T=$(repeat d 4096)
+
+if [ "${#line_4096}" -ne 4096 ] || [ "${#quoted_4096}" -ne 4096 ]; then
+    echo "test setup error: long lines are ${#line_4096}/${#quoted_4096} chars, not 4096"
+    exit 1
+fi
+check "TC-QUAL-02 4096-character line echoed exactly" "$line_4096" "$word_4091"
+check "TC-QUAL-02 4096-character single argument" "echo $word_4096" "$word_4096"
+check "TC-QUAL-02 quoted 4096-character line keeps spaces" \
+    "$quoted_4096" "$half   $half"
+check "TC-QUAL-02 4096-character variable expands fully" \
+    "echo \$LONG_T\$LONG_T" "$LONG_T$LONG_T"
+check "TC-QUAL-02 8192-character line handled" \
+    "echo $word_4096 $word_4096" "$word_4096 $word_4096"
+check "TC-QUAL-02 shell still works after long lines" \
+    "$line_4096${NL}echo \$?${NL}echo ok" "$(printf '%s\n0\nok' "$word_4091")"
+check_status "TC-QUAL-02 no crash: exits normally after long input" \
+    "$line_4096${NL}echo $word_4096${NL}exit 0" 0
+
 echo
 echo "Passed: $pass  Failed: $fail"
 [ "$fail" -eq 0 ]
