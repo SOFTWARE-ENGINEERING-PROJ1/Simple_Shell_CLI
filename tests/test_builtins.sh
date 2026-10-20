@@ -168,8 +168,18 @@ check "TC-QUAL-02 8192-character line handled" \
     "echo $word_4096 $word_4096" "$word_4096 $word_4096"
 check "TC-QUAL-02 shell still works after long lines" \
     "$line_4096${NL}echo \$?${NL}echo ok" "$(printf '%s\n0\nok' "$word_4091")"
-check_status "TC-QUAL-02 no crash: exits normally after long input" \
-    "$line_4096${NL}echo $word_4096${NL}exit 0" 0
+# Both the output and the exit status must be right: a shell that crashes,
+# or one that silently ignores input, has to fail this.
+long_out=$(printf '%s\n' "$line_4096" "echo $word_4096 $word_4096" "echo done" "exit 0" \
+    | "$SHELL_BIN" 2>/dev/null)
+long_code=$?
+long_want=$(printf '%s\n%s\ndone' "$word_4091" "$word_4096 $word_4096")
+if [ "$long_code" -eq 0 ] && [ "$long_out" = "$long_want" ]; then
+    pass=$((pass + 1)); echo "PASS  TC-QUAL-02 no crash: correct output and exit 0 after long input"
+else
+    fail=$((fail + 1))
+    echo "FAIL  TC-QUAL-02 no crash: exit $long_code, ${#long_out} chars of output (want 0, ${#long_want})"
+fi
 
 echo
 echo "Passed: $pass  Failed: $fail"
