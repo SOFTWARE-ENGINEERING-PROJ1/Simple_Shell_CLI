@@ -1,14 +1,21 @@
 #define _POSIX_C_SOURCE 200809L
+
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 
 #include "shell.h"
 
+
+
+
 /**
- * Run one tokenized command and return its exit status.
- * Built-ins run in the shell process; external execution is added in S3.
+ * Run a built-in in the shell process, or execute an external
+ * command in a child process and return its exit status.
  */
 static int execute_command(char **argv, shell_state_t *state) {
     if (is_builtin(argv[0])) {
@@ -16,9 +23,54 @@ static int execute_command(char **argv, shell_state_t *state) {
         fflush(stdout);
         return status;
     }
-    fprintf(stderr, "simpleshell: %s: command not found\n", argv[0]);
-    return 127;
+
+    /* Flush output before creating the child process. */
+    fflush(NULL);
+
+    pid_t pid = fork();
+
+    if (pid < 0) {
+        perror("simpleshell: fork");
+        return 1;
+    }
+
+    if (pid == 0) {
+        /* Child process: execute the external command. */
+        execvp(argv[0], argv);
+
+        /* execvp returns only when execution fails. */
+        int saved_errno = errno;
+
+        fprintf(stderr, "simpleshell: %s: %s\n",
+                argv[0], strerror(saved_errno));
+
+        _exit(saved_errno == ENOENT ? 127 : 126);
+    }
+
+    /* Parent process: wait for the foreground command. */
+    int wait_status;
+    pid_t result;
+
+    do {
+        result = waitpid(pid, &wait_status, 0);
+    } while (result == -1 && errno == EINTR);
+
+    if (result == -1) {
+        perror("simpleshell: waitpid");
+        return 1;
+    }
+
+    if (WIFEXITED(wait_status)) {
+        return WEXITSTATUS(wait_status);
+    }
+
+    if (WIFSIGNALED(wait_status)) {
+        return 128 + WTERMSIG(wait_status);
+    }
+
+    return 1;
 }
+
 
 int main(void) {
     char *line = NULL;
