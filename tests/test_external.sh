@@ -114,6 +114,31 @@ check "variable expansion in external arguments" "variable_works" "$actual"
 actual=$(printf 's3_command_that_does_not_exist\n/bin/echo CHILD_FAILURE_DID_NOT_STOP_PARENT\nexit\n' | "$SHELL_BIN" 2>/dev/null)
 check "parent continues after child execution failure" "CHILD_FAILURE_DID_NOT_STOP_PARENT" "$actual"
 
+
+
+# 16. Exit status updates after a failing command and then a successful one.
+actual=$(printf '%s\n' \
+    "$TMP_DIR/exit7" \
+    '/usr/bin/printf "STATUS=%s\n" "$?"' \
+    '/bin/true' \
+    '/usr/bin/printf "STATUS=%s\n" "$?"' \
+    'exit' | "$SHELL_BIN" 2>/dev/null)
+check "status updates after failure then success" \
+    "$(printf 'STATUS=7\nSTATUS=0')" "$actual"
+
+# 17. Signal termination produces status 128 + signal number.
+cat > "$TMP_DIR/signal_term" <<'EOF'
+#!/bin/sh
+kill -TERM $$
+EOF
+chmod +x "$TMP_DIR/signal_term"
+
+actual=$(printf '%s\n' \
+    "$TMP_DIR/signal_term" \
+    '/usr/bin/printf "STATUS=%s\n" "$?"' \
+    'exit' | "$SHELL_BIN" 2>/dev/null)
+check "signal termination status is 143" "STATUS=143" "$actual"
+
 printf '\nS3 External Command Tests: Passed %s  Failed %s\n' "$PASS" "$FAIL"
 
 [ "$FAIL" -eq 0 ]
