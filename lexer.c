@@ -53,9 +53,7 @@ void free_tokens(char **tokens) {
 
 /**
  * Read one token starting at line[*i] into sb.
- * Sets *keep to 0 when the token is empty and came only from unquoted
- * expansions (e.g. `$UNSET`), so it should be dropped like in sh.
- * Returns 0 on success, -1 on error (message already printed).
+ * Properly recognizes operators: |, <, >, >>, 2> outside quotes.
  */
 static int read_token(const char *line, size_t *i, const shell_state_t *state,
                       strbuf_t *sb, int *keep) {
@@ -74,6 +72,27 @@ static int read_token(const char *line, size_t *i, const shell_state_t *state,
             quoted = 1;
             (*i)++;
         } else if ((c == ' ' || c == '\t') && !in_single && !in_double) {
+            break;
+        } else if (!in_single && !in_double &&
+                   (c == '|' || c == '<' || c == '>' ||
+                    (c == '2' && line[*i + 1] == '>'))) {
+            // If we already accumulated word characters, finish that word first
+            if (sb->len > 0) {
+                break;
+            }
+
+            // Otherwise, consume the operator token
+            if (c == '2' && line[*i + 1] == '>') {
+                rc = strbuf_puts(sb, "2>");
+                *i += 2;
+            } else if (c == '>' && line[*i + 1] == '>') {
+                rc = strbuf_puts(sb, ">>");
+                *i += 2;
+            } else {
+                rc = strbuf_putc(sb, c);
+                (*i)++;
+            }
+            if (rc != 0) return -1;
             break;
         } else if (c == '$' && !in_single) {
             rc = expand_variable(line, i, state, sb);
@@ -107,11 +126,13 @@ static int push_token(char ***tokens, size_t *count, size_t *capacity,
         *tokens = grown;
         *capacity = new_cap;
     }
-    char *copy = strdup(tok);
+    size_t len = strlen(tok);
+    char *copy = malloc(len + 1);
     if (!copy) {
-        perror("strdup");
+        perror("malloc");
         return -1;
     }
+    memcpy(copy, tok, len + 1);
     (*tokens)[(*count)++] = copy;
     (*tokens)[*count] = NULL;
     return 0;
@@ -119,9 +140,6 @@ static int push_token(char ***tokens, size_t *count, size_t *capacity,
 
 /**
  * Tokenize input command line.
- * Handles whitespace delimiters, single quotes ('...'), double quotes ("...")
- * and variable expansion outside single quotes.
- * Returns a NULL-terminated array of strings, or NULL on error.
  */
 char **tokenize_command(const char *line, const shell_state_t *state) {
     size_t capacity = INITIAL_TOKENS_CAPACITY;
