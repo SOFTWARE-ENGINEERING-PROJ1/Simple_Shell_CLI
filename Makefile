@@ -17,6 +17,7 @@ $(TARGET): $(OBJS)
 test: $(TARGET)
 	SHELL_BIN=./$(TARGET) sh tests/test_builtins.sh
 	SHELL_BIN=./$(TARGET) sh tests/test_external.sh
+	SHELL_BIN=./$(TARGET) sh tests/test_pipelines.sh
 
 clean:
 	rm -f $(OBJS) $(TARGET)
