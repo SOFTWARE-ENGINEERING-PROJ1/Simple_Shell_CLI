@@ -278,7 +278,7 @@ static int execute_pipeline(char **tokens, shell_state_t *state) {
             // Execute built-in or external command
             if (is_builtin(cmds[i].argv[0])) {
                 int status = run_builtin(cmds[i].argv, state);
-                _exit(status);
+                fflush(stdout); fflush(stderr); _exit(status);
             }
 
             execvp(cmds[i].argv[0], cmds[i].argv);
