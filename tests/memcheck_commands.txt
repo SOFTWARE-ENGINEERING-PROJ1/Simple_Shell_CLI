@@ -1,0 +1,53 @@
+echo memory check start
+pwd
+cd /tmp
+pwd
+cd
+cd /no/such/dir
+export A=one
+export B="two words"
+echo $A ${B} $? $$
+echo "$A   $B" '$A'
+unset A
+echo [$A]
+export 1BAD=x
+unset 9bad
+echo ${1x}
+echo ${UNCLOSED
+echo "unclosed quote
+help
+true
+false
+echo $?
+nosuchcmd_memcheck
+echo $?
+/no/such/path/prog
+ls /
+ls / | grep tmp
+ls / | sort | head -n 3
+false | true
+true | false
+echo $?
+echo piped | cat | cat | cat
+echo hi > /tmp/s5_memcheck_out.txt
+echo again >> /tmp/s5_memcheck_out.txt
+cat < /tmp/s5_memcheck_out.txt
+cat < /no/such/file
+echo x > /no/such/dir/file
+/bin/echo x > /no/such/dir/file
+ls /no/such/dir 2> /tmp/s5_memcheck_err.txt
+cat /tmp/s5_memcheck_err.txt
+| echo leading pipe
+echo trailing pipe |
+echo a || echo b
+echo x >
+cat < > x
+export P='|'
+echo before $P after
+export R='>'
+echo hi $R not_a_file
+echo '|' "<" '2>'
+echo a2>/dev/null b
+
+echo done with fifty commands
+exit 0
