@@ -61,7 +61,7 @@ actual=$(printf 's3_hello\nexit\n' | PATH="$TMP_DIR/bin:$PATH" "$SHELL_BIN" 2>/d
 check "find command through PATH" "PATH_OK" "$actual"
 
 # 4. Successful command with no output.
-actual=$(printf '%s\n' '/bin/true' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
+actual=$(printf '%s\n' 'true' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
 check "successful command status is zero" "STATUS=0" "$actual"
 
 # 5. Multiple external commands run sequentially.
@@ -120,7 +120,7 @@ check "parent continues after child execution failure" "CHILD_FAILURE_DID_NOT_ST
 actual=$(printf '%s\n' \
     "$TMP_DIR/exit7" \
     '/usr/bin/printf "STATUS=%s\n" "$?"' \
-    '/bin/true' \
+    'true' \
     '/usr/bin/printf "STATUS=%s\n" "$?"' \
     'exit' | "$SHELL_BIN" 2>/dev/null)
 check "status updates after failure then success" \
