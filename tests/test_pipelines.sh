@@ -54,11 +54,11 @@ file_content=$(cat "$TMP_DIR/combined.txt" 2>/dev/null)
 check "combined input and output (< and >)" "input data from file" "$file_content"
 
 # 6. Two-stage pipeline (cmd1 | cmd2)
-actual=$(printf '%s\n' "/bin/echo -e 'apple\nbanana\ncherry' | /bin/grep banana" 'exit' | "$SHELL_BIN" 2>/dev/null)
+actual=$(printf '%s\n' "/usr/bin/printf 'apple\nbanana\ncherry\n' | grep banana" 'exit' | "$SHELL_BIN" 2>/dev/null)
 check "two-stage pipeline (cmd1 | cmd2)" "banana" "$actual"
 
 # 7. Chained 3-stage pipeline (cmd1 | cmd2 | cmd3)
-actual=$(printf '%s\n' "/bin/echo -e 'zebra\napple\nmango' | /usr/bin/sort | /usr/bin/head -n 1" 'exit' | "$SHELL_BIN" 2>/dev/null)
+actual=$(printf '%s\n' "/usr/bin/printf 'zebra\napple\nmango\n' | /usr/bin/sort | /usr/bin/head -n 1" 'exit' | "$SHELL_BIN" 2>/dev/null)
 check "chained pipeline (cmd1 | cmd2 | cmd3)" "apple" "$actual"
 
 # 8. Pipeline with built-in command (echo | external)
@@ -66,15 +66,15 @@ actual=$(printf '%s\n' "echo pipeline_builtin_test | /usr/bin/tr a-z A-Z" 'exit'
 check "pipeline with built-in echo" "PIPELINE_BUILTIN_TEST" "$actual"
 
 # 9. Pipeline exit status is from the LAST command
-actual=$(printf '%s\n' '/bin/false | /bin/true' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
+actual=$(printf '%s\n' 'false | true' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
 check "pipeline exit status matches last command (true)" "STATUS=0" "$actual"
 
-actual=$(printf '%s\n' '/bin/true | /bin/false' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
+actual=$(printf '%s\n' 'true | false' '/usr/bin/printf "STATUS=%s\n" "$?"' 'exit' | "$SHELL_BIN" 2>/dev/null)
 check "pipeline exit status matches last command (false)" "STATUS=1" "$actual"
 
 # 10. Chained pipeline completes without deadlock on large data
 actual=$(printf '%s\n' '/usr/bin/yes | /usr/bin/head -n 5' 'exit' | "$SHELL_BIN" 2>/dev/null)
-count=$(printf '%s\n' "$actual" | wc -l)
+count=$(printf '%s\n' "$actual" | wc -l | tr -d ' ')
 check "chained pipeline completes without deadlock" "5" "$count"
 
 # 11. Pipeline syntax error (starting with pipe)

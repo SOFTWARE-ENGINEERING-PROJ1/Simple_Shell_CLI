@@ -43,21 +43,37 @@ int strbuf_puts(strbuf_t *sb, const char *s) {
 /**
  * Free the array of tokens and each token string
  */
-void free_tokens(char **tokens) {
+void free_tokens(token_t *tokens) {
     if (!tokens) return;
-    for (int i = 0; tokens[i] != NULL; i++) {
-        free(tokens[i]);
+    for (int i = 0; tokens[i].text != NULL; i++) {
+        free(tokens[i].text);
     }
     free(tokens);
 }
 
+int token_is_op(const token_t *tok, const char *op) {
+    return tok->text && tok->is_op && strcmp(tok->text, op) == 0;
+}
+
+/**
+ * Return 1 if line[i] starts an unquoted operator: |, <, >, >>, or 2>.
+ * "2>" only counts at the start of a word, so `a2>f` is `a2` then `>`.
+ */
+static int starts_operator(const char *line, size_t i, int at_word_start) {
+    char c = line[i];
+    if (c == '|' || c == '<' || c == '>') return 1;
+    return c == '2' && line[i + 1] == '>' && at_word_start;
+}
+
 /**
  * Read one token starting at line[*i] into sb.
- * Properly recognizes operators: |, <, >, >>, 2> outside quotes.
+ * Recognizes operators |, <, >, >>, 2> only when typed unquoted; quoted
+ * text and the results of $-expansion are always plain words (*is_op = 0).
  */
 static int read_token(const char *line, size_t *i, const shell_state_t *state,
-                      strbuf_t *sb, int *keep) {
+                      strbuf_t *sb, int *keep, int *is_op) {
     int in_single = 0, in_double = 0, quoted = 0;
+    *is_op = 0;
 
     while (line[*i] != '\0') {
         char c = line[*i];
@@ -74,12 +90,12 @@ static int read_token(const char *line, size_t *i, const shell_state_t *state,
         } else if ((c == ' ' || c == '\t') && !in_single && !in_double) {
             break;
         } else if (!in_single && !in_double &&
-                   (c == '|' || c == '<' || c == '>' ||
-                    (c == '2' && line[*i + 1] == '>'))) {
-            // If we already accumulated word characters, finish that word first
-            if (sb->len > 0) {
+                   starts_operator(line, *i, sb->len == 0 && !quoted)) {
+            // If we already have a word (even an empty quoted one), end it first
+            if (sb->len > 0 || quoted) {
                 break;
             }
+            *is_op = 1;
 
             // Otherwise, consume the operator token
             if (c == '2' && line[*i + 1] == '>') {
@@ -112,13 +128,13 @@ static int read_token(const char *line, size_t *i, const shell_state_t *state,
 }
 
 /**
- * Append a copy of tok to the tokens array, growing it as needed.
+ * Append a copy of text to the tokens array, growing it as needed.
  */
-static int push_token(char ***tokens, size_t *count, size_t *capacity,
-                      const char *tok) {
+static int push_token(token_t **tokens, size_t *count, size_t *capacity,
+                      const char *text, int is_op) {
     if (*count + 1 >= *capacity) {
         size_t new_cap = *capacity * 2;
-        char **grown = realloc(*tokens, new_cap * sizeof(char *));
+        token_t *grown = realloc(*tokens, new_cap * sizeof(token_t));
         if (!grown) {
             perror("realloc");
             return -1;
@@ -126,30 +142,35 @@ static int push_token(char ***tokens, size_t *count, size_t *capacity,
         *tokens = grown;
         *capacity = new_cap;
     }
-    size_t len = strlen(tok);
+    size_t len = strlen(text);
     char *copy = malloc(len + 1);
     if (!copy) {
         perror("malloc");
         return -1;
     }
-    memcpy(copy, tok, len + 1);
-    (*tokens)[(*count)++] = copy;
-    (*tokens)[*count] = NULL;
+    memcpy(copy, text, len + 1);
+    (*tokens)[*count].text = copy;
+    (*tokens)[*count].is_op = is_op;
+    (*count)++;
+    (*tokens)[*count].text = NULL;
+    (*tokens)[*count].is_op = 0;
     return 0;
 }
 
 /**
  * Tokenize input command line.
+ * Returns an array terminated by a token with text == NULL, or NULL on error.
  */
-char **tokenize_command(const char *line, const shell_state_t *state) {
+token_t *tokenize_command(const char *line, const shell_state_t *state) {
     size_t capacity = INITIAL_TOKENS_CAPACITY;
     size_t count = 0;
-    char **tokens = malloc(capacity * sizeof(char *));
+    token_t *tokens = malloc(capacity * sizeof(token_t));
     if (!tokens) {
         perror("malloc");
         return NULL;
     }
-    tokens[0] = NULL;
+    tokens[0].text = NULL;
+    tokens[0].is_op = 0;
 
     strbuf_t sb = {0};
     size_t i = 0;
@@ -157,12 +178,12 @@ char **tokenize_command(const char *line, const shell_state_t *state) {
         while (line[i] == ' ' || line[i] == '\t') i++;
         if (line[i] == '\0') break;
 
-        int keep = 0;
+        int keep = 0, is_op = 0;
         sb.len = 0;
         if (strbuf_reserve(&sb, 0) != 0) goto fail;
         sb.data[0] = '\0';
-        if (read_token(line, &i, state, &sb, &keep) != 0) goto fail;
-        if (keep && push_token(&tokens, &count, &capacity, sb.data) != 0)
+        if (read_token(line, &i, state, &sb, &keep, &is_op) != 0) goto fail;
+        if (keep && push_token(&tokens, &count, &capacity, sb.data, is_op) != 0)
             goto fail;
     }
 
