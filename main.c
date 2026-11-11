@@ -393,13 +393,24 @@ static int execute_pipeline(const token_t *tokens, shell_state_t *state) {
  * Returns the getline() result (-1 only on real EOF or error).
  */
 static ssize_t read_line(char **line, size_t *len, const shell_state_t *state) {
-    ssize_t nread;
-
-    if (state->interactive) {
-        printf("%s", PROMPT);
-        fflush(stdout);
-    }
     signals_set_at_prompt(1);
+    if (state->interactive) {
+        char *rl_input = interactive_read_line(PROMPT);
+        signals_set_at_prompt(0);
+        if (!rl_input) {
+            return -1; // EOF
+        }
+        size_t slen = strlen(rl_input);
+        if (*line) free(*line);
+        *line = rl_input;
+        *len = slen;
+        if (slen > 0) {
+            interactive_add_history(rl_input);
+        }
+        return (ssize_t)slen;
+    }
+
+    ssize_t nread;
     do {
         errno = 0;
         clearerr(stdin);
@@ -416,6 +427,7 @@ int main(void) {
     shell_state_t state = {0, getpid(), 0, 0, isatty(STDIN_FILENO)};
 
     signals_init(state.interactive);
+    if (state.interactive) interactive_init();
 
     while (!state.should_exit) {
         stopped_reap();

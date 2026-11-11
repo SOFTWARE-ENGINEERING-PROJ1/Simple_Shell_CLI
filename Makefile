@@ -1,7 +1,8 @@
 CC      ?= gcc
 CFLAGS  ?= -Wall -Wextra -Wpedantic -std=c11 -g
+LDLIBS  ?= -lreadline
 TARGET  = shell
-SRCS    = main.c lexer.c expand.c builtins.c signals.c
+SRCS    = main.c lexer.c expand.c builtins.c signals.c interactive.c
 OBJS    = $(SRCS:.c=.o)
 
 .PHONY: all clean test memcheck
@@ -9,7 +10,7 @@ OBJS    = $(SRCS:.c=.o)
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $(OBJS)
+	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 %.o: %.c shell.h
 	$(CC) $(CFLAGS) -c $< -o $@
@@ -25,7 +26,6 @@ test: $(TARGET)
 		echo "SKIP  Ctrl-C/Ctrl-Z terminal tests (python3 not found)"; \
 	fi
 
-# Valgrind over 50+ commands including error paths (S5 §8 / NFR-02)
 memcheck: $(TARGET)
 	valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite,indirect \
 		--error-exitcode=1 ./$(TARGET) < tests/memcheck_commands.txt > /dev/null
