@@ -395,6 +395,7 @@ static int execute_pipeline(const token_t *tokens, shell_state_t *state) {
 static ssize_t read_line(char **line, size_t *len, const shell_state_t *state) {
     signals_set_at_prompt(1);
     if (state->interactive) {
+        clearerr(stdin);
         char *rl_input = interactive_read_line(PROMPT);
         signals_set_at_prompt(0);
         if (!rl_input) {

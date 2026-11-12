@@ -20,6 +20,7 @@ test: $(TARGET)
 	SHELL_BIN=./$(TARGET) sh tests/test_external.sh
 	SHELL_BIN=./$(TARGET) sh tests/test_pipelines.sh
 	SHELL_BIN=./$(TARGET) sh tests/test_s5.sh
+	SHELL_BIN=./$(TARGET) sh tests/test_interactive.sh
 	@if command -v python3 >/dev/null 2>&1; then \
 		python3 tests/test_tty.py ./$(TARGET); \
 	else \
