@@ -2,7 +2,7 @@ CC      ?= gcc
 CFLAGS  ?= -Wall -Wextra -Wpedantic -std=c11 -g
 LDLIBS  ?= -lreadline
 TARGET  = shell
-SRCS    = main.c lexer.c expand.c builtins.c signals.c interactive.c
+SRCS    = main.c lexer.c expand.c builtins.c signals.c interactive.c jobs.c
 OBJS    = $(SRCS:.c=.o)
 
 .PHONY: all clean test memcheck

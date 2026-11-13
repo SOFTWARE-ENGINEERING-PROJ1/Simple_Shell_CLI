@@ -77,8 +77,8 @@ check "export error sets \$? to 1" "export 1BAD=x${NL}echo \$?" "1"
 check_stderr "unset rejects invalid identifier" "unset 1BAD" "not a valid identifier"
 
 # help
-check "TC-BUILTIN-07 help lists all 7 built-ins" \
-    "help" "$(printf '%s\n' 'cd' 'pwd' 'echo' 'export' 'unset' 'help' 'exit')" \
+check "TC-BUILTIN-07 help lists all 10 built-ins" \
+    "help" "$(printf '%s\n' 'cd' 'pwd' 'echo' 'export' 'unset' 'help' 'jobs' 'fg' 'bg' 'exit')" \
     "awk '/^  /{print \$1}'"
 
 # exit

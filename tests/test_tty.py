@@ -184,7 +184,7 @@ def test_ctrl_z_child():
     back = s.read_until(re.escape(PROMPT), timeout=3)
     check("Ctrl-Z during 'sleep 30': shell continues and prompt returns", back and s.alive())
     check("Ctrl-Z: shell reports the child as stopped (no silent hang)",
-          b"[stopped] sleep" in s.buf, s.buf)
+      re.search(rb"\[\d+\] Stopped sleep", s.buf) is not None, s.buf)
     status = last_status(s)
     check("Ctrl-Z: $? is 128+SIGTSTP", status == 128 + signal.SIGTSTP, status)
     pid = find_sleep_pid(s)

@@ -8,13 +8,15 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
-
+#include <termios.h>
 #include "shell.h"
 
 /* 1 while the shell is waiting at the prompt (read by the signal handler). */
 static volatile sig_atomic_t g_at_prompt = 0;
 static volatile sig_atomic_t g_show_prompt = 0;
-
+static pid_t shell_pgid = -1;
+static int shell_terminal = STDIN_FILENO;
+static int job_control_enabled = 0;
 /* Children suspended by Ctrl-Z. Job control is out of scope, so these are
  * only remembered so they can be reaped or terminated, never resumed. */
 static pid_t *g_stopped = NULL;
@@ -28,15 +30,20 @@ static size_t g_stopped_cap = 0;
  * At an idle prompt the terminal has already discarded the typed line, so
  * redraw the prompt. Only async-signal-safe write() is used here.
  */
+static volatile sig_atomic_t g_prompt_interrupted = 0;
+
 static void shell_signal_handler(int sig) {
     (void)sig;
+
     if (g_at_prompt && g_show_prompt) {
-        int saved_errno = errno;
-        static const char msg[] = "\n" PROMPT;
-        ssize_t ignored = write(STDOUT_FILENO, msg, sizeof(msg) - 1);
-        (void)ignored;
-        errno = saved_errno;
+        g_prompt_interrupted = 1;
     }
+}
+
+int signals_take_prompt_interrupt(void) {
+    sig_atomic_t interrupted = g_prompt_interrupted;
+    g_prompt_interrupted = 0;
+    return interrupted;
 }
 
 void signals_init(int interactive) {
@@ -51,7 +58,134 @@ void signals_init(int interactive) {
     if (sigaction(SIGINT, &sa, NULL) != 0) perror("simpleshell: sigaction SIGINT");
     if (sigaction(SIGTSTP, &sa, NULL) != 0) perror("simpleshell: sigaction SIGTSTP");
 }
+void job_control_init(void) {
 
+    if (!isatty(shell_terminal)) {
+        job_control_enabled = 0;
+        return;
+    }
+
+    shell_pgid = getpid();
+
+    /* Prevent the shell from being stopped while changing terminal owner. */
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_IGN;
+    sigemptyset(&sa.sa_mask);
+
+    sigaction(SIGTTOU, &sa, NULL);
+    sigaction(SIGTTIN, &sa, NULL);
+
+
+    if (setpgid(shell_pgid, shell_pgid) < 0 &&
+        errno != EACCES && errno != EPERM) {
+        perror("simpleshell: setpgid");
+    }
+
+    shell_pgid = getpgrp();
+
+    if (tcsetpgrp(shell_terminal, shell_pgid) < 0) {
+        perror("simpleshell: tcsetpgrp");
+        return;
+    }
+
+    job_control_enabled = 1;
+}
+void job_control_give_terminal(pid_t pgid) {
+    if (job_control_enabled && pgid > 0) {
+        if (tcsetpgrp(shell_terminal, pgid) < 0) {
+            perror("simpleshell: tcsetpgrp");
+        }
+    }
+}
+
+void job_control_restore_terminal(void) {
+    if (job_control_enabled && shell_pgid > 0) {
+        if (tcsetpgrp(shell_terminal, shell_pgid) < 0) {
+            perror("simpleshell: restore terminal");
+        }
+    }
+}
+
+int job_control_wait(job_t *job) {
+    if (!job) {
+        return 1;
+    }
+
+    int last_status = job->last_status;
+
+    while (job->completed_count + job->stopped_count <
+           job->process_count) {
+
+        int status = 0;
+        pid_t pid = waitpid(-job->pgid, &status, WUNTRACED);
+
+        if (pid < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            if (errno == ECHILD) {
+                break;
+            }
+
+            perror("simpleshell: waitpid");
+            return 1;
+        }
+
+        for (int i = 0; i < job->process_count; i++) {
+            if (job->pids[i] != pid) {
+                continue;
+            }
+
+            if (WIFSTOPPED(status)) {
+                if (job->states[i] != 1) {
+                    job->states[i] = 1;
+                    job->stopped_count++;
+                }
+
+                if (i == job->process_count - 1) {
+                    last_status = 128 + WSTOPSIG(status);
+                }
+            } else if (WIFEXITED(status)) {
+                if (job->states[i] != 2) {
+                    if (job->states[i] == 1) {
+                        job->stopped_count--;
+                    }
+
+                    job->states[i] = 2;
+                    job->completed_count++;
+                }
+
+                job->pids[i] = -1;
+
+                if (i == job->process_count - 1) {
+                    last_status = WEXITSTATUS(status);
+                }
+            } else if (WIFSIGNALED(status)) {
+                if (job->states[i] != 2) {
+                    if (job->states[i] == 1) {
+                        job->stopped_count--;
+                    }
+
+                    job->states[i] = 2;
+                    job->completed_count++;
+                }
+
+                job->pids[i] = -1;
+
+                if (i == job->process_count - 1) {
+                    last_status = 128 + WTERMSIG(status);
+                }
+            }
+
+            break;
+        }
+    }
+
+    job->last_status = last_status;
+    return last_status;
+}
 void signals_child_default(void) {
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
@@ -59,6 +193,8 @@ void signals_child_default(void) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTSTP, &sa, NULL);
+    sigaction(SIGTTIN, &sa, NULL);
+sigaction(SIGTTOU, &sa, NULL);
 }
 
 void signals_set_at_prompt(int at_prompt) {

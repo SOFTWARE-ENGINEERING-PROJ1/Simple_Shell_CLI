@@ -63,12 +63,17 @@ int expand_variable(const char *line, size_t *i, const shell_state_t *state,
     char numbuf[32];
     char next = line[*i + 1];
 
-    if (next == '?' || next == '$') {
-        long value = next == '?' ? (long)state->last_status : (long)state->pid;
-        snprintf(numbuf, sizeof(numbuf), "%ld", value);
-        *i += 2;
-        return strbuf_puts(sb, numbuf);
-    }
+    if (next == '?') {
+    /* Defer $? expansion until the command is executed. */
+    *i += 2;
+    return strbuf_putc(sb, '\x1F');
+}
+
+if (next == '$') {
+    snprintf(numbuf, sizeof(numbuf), "%ld", (long)state->pid);
+    *i += 2;
+    return strbuf_puts(sb, numbuf);
+}
     if (next == '{') {
         (*i)++;
         return expand_braced(line, i, sb);

@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "shell.h"
 
@@ -29,6 +30,9 @@ static int builtin_export(char **argv, shell_state_t *state);
 static int builtin_unset(char **argv, shell_state_t *state);
 static int builtin_help(char **argv, shell_state_t *state);
 static int builtin_exit(char **argv, shell_state_t *state);
+static int builtin_jobs(char **argv, shell_state_t *state);
+static int builtin_fg(char **argv, shell_state_t *state);
+static int builtin_bg(char **argv, shell_state_t *state);
 
 static const builtin_t BUILTINS[] = {
     {"cd", builtin_cd, "cd [dir]        Change directory (default: $HOME)"},
@@ -37,8 +41,12 @@ static const builtin_t BUILTINS[] = {
     {"export", builtin_export, "export VAR=val  Set an environment variable"},
     {"unset", builtin_unset, "unset VAR       Remove an environment variable"},
     {"help", builtin_help, "help            Show this help message"},
-    {"exit", builtin_exit, "exit [n]        Exit the shell with status n (default 0)"},
+    {"jobs", builtin_jobs, "jobs            List running and stopped jobs"},
+    {"fg", builtin_fg, "fg %job         Resume a job in the foreground"},
+    {"bg", builtin_bg, "bg %job         Resume a job in the background"},
+    {"exit", builtin_exit, "exit [n]        Exit the shell with status n (default 0)"}
 };
+
 
 #define NUM_BUILTINS (sizeof(BUILTINS) / sizeof(BUILTINS[0]))
 
@@ -233,4 +241,138 @@ static int builtin_exit(char **argv, shell_state_t *state) {
     state->should_exit = 1;
     state->exit_code = code;
     return code;
+}
+
+/**
+ * jobs: display currently running and stopped background jobs.
+ */
+static int builtin_jobs(char **argv, shell_state_t *state) {
+    (void)argv;
+    (void)state;
+
+    jobs_print();
+    return 0;
+}
+static int parse_job_id(const char *arg) {
+    if (!arg) {
+        return -1;
+    }
+
+    if (*arg == '%') {
+        arg++;
+    }
+
+    char *end;
+    errno = 0;
+    long id = strtol(arg, &end, 10);
+
+    if (errno != 0 || end == arg || *end != '\0' ||
+        id <= 0 || id > INT_MAX) {
+        return -1;
+    }
+
+    return (int)id;
+}
+static int builtin_fg(char **argv, shell_state_t *state) {
+    if (!argv[1] || argv[2]) {
+        fprintf(stderr, "simpleshell: fg: usage: fg %%job\n");
+        return 1;
+    }
+
+    int job_id = parse_job_id(argv[1]);
+
+    if (job_id < 0) {
+        fprintf(stderr, "simpleshell: fg: invalid job ID\n");
+        return 1;
+    }
+
+    jobs_reap();
+
+    job_t *job = jobs_find(job_id);
+
+    if (!job) {
+        fprintf(stderr, "simpleshell: fg: job not found\n");
+        return 1;
+    }
+
+    pid_t pgid = job->pgid;
+
+    job_control_give_terminal(pgid);
+
+    if (job->stopped_count > 0) {
+        if (kill(-pgid, SIGCONT) < 0) {
+            perror("simpleshell: fg: SIGCONT");
+            job_control_restore_terminal();
+            return 1;
+        }
+
+        for (int i = 0; i < job->process_count; i++) {
+            if (job->states[i] == 1) {
+                job->states[i] = 0;
+            }
+        }
+
+        job->stopped_count = 0;
+    }
+
+    int status = job_control_wait(job);
+
+    job_control_restore_terminal();
+
+    if (job->completed_count == job->process_count) {
+        jobs_remove(job_id);
+    } else {
+        fprintf(stderr, "\n[%d] Stopped %s\n",
+                job_id, job->command);
+    }
+
+    state->last_status = status;
+    return status;
+}
+static int builtin_bg(char **argv, shell_state_t *state) {
+    (void)state;
+
+    if (!argv[1] || argv[2]) {
+        fprintf(stderr, "simpleshell: bg: usage: bg %%job\n");
+        return 1;
+    }
+
+    int job_id = parse_job_id(argv[1]);
+
+    if (job_id < 0) {
+        fprintf(stderr, "simpleshell: bg: invalid job ID\n");
+        return 1;
+    }
+
+    jobs_reap();
+
+    job_t *job = jobs_find(job_id);
+
+    if (!job) {
+        fprintf(stderr, "simpleshell: bg: job not found\n");
+        return 1;
+    }
+
+    if (job->stopped_count == 0) {
+        fprintf(stderr, "simpleshell: bg: job is already running\n");
+        return 1;
+    }
+
+    if (kill(-job->pgid, SIGCONT) < 0) {
+        perror("simpleshell: bg: SIGCONT");
+        return 1;
+    }
+
+    for (int i = 0; i < job->process_count; i++) {
+        if (job->states[i] == 1) {
+            job->states[i] = 0;
+        }
+    }
+
+    job->stopped_count = 0;
+
+    printf("[%d] Running %s &\n", job->job_id, job->command);
+    fflush(stdout);
+
+    return 0;
 }

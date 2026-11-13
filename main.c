@@ -335,31 +335,89 @@ static int wait_pipeline(const pid_t *pids, int num_cmds, const char *name,
  * Fork one child per stage. Stops early if fork() fails; unstarted
  * stages keep pid -1. Returns 0 on success, -1 if any fork failed.
  */
+
 static int start_stages(command_t *cmds, int num_cmds, int (*pipes)[2],
-                        pid_t *pids, shell_state_t *state) {
+                        pid_t *pids, shell_state_t *state,
+                        int background, pid_t *pgid) {
+    (void)background;
+
     fflush(NULL);
+    *pgid = 0;
+
     for (int i = 0; i < num_cmds; i++) {
         pids[i] = fork();
+
         if (pids[i] < 0) {
             perror("simpleshell: fork");
             return -1;
         }
-        if (pids[i] == 0) run_stage(cmds, i, num_cmds, pipes, state);
+
+        if (pids[i] == 0) {
+            pid_t child_pgid = (*pgid == 0) ? getpid() : *pgid;
+
+            if (setpgid(0, child_pgid) < 0) {
+                perror("simpleshell: child setpgid");
+                _exit(1);
+            }
+
+            run_stage(cmds, i, num_cmds, pipes, state);
+        }
+
+        if (*pgid == 0) {
+            *pgid = pids[i];
+        }
+
+        /* Parent also sets the process group to avoid a fork race. */
+        if (setpgid(pids[i], *pgid) < 0 &&
+            errno != EACCES && errno != ESRCH) {
+            perror("simpleshell: parent setpgid");
+        }
     }
+
     return 0;
 }
+
 
 /**
  * Execute a single command or multi-stage pipeline with redirections.
  */
-static int execute_pipeline(const token_t *tokens, shell_state_t *state) {
+static int execute_pipeline(token_t *tokens, shell_state_t *state,
+                            const char *line) {
     command_t *cmds = NULL;
+        int background = 0;
+    size_t total_tokens = 0;
+
+    while (tokens[total_tokens].text != NULL) {
+        total_tokens++;
+    }
+
+    /* Detect a trailing unquoted & operator. */
+    for (size_t i = 0; i < total_tokens; i++) {
+        if (token_is_op(&tokens[i], "&")) {
+            if (i != total_tokens - 1) {
+                fprintf(stderr,
+                        "simpleshell: syntax error near unexpected token '&'\n");
+                return 2;
+            }
+
+            background = 1;
+free(tokens[i].text);
+tokens[i].text = NULL;
+break;
+        }
+    }
+
+    if (background && total_tokens == 1) {
+        fprintf(stderr, "simpleshell: syntax error near unexpected token '&'\n");
+        return 2;
+    }
     int num_cmds = parse_pipeline(tokens, &cmds);
     if (num_cmds < 0) return 2; // Syntax error
     if (num_cmds == 0) return 0;
 
     // Single built-in command without pipes: execute in parent process
-    if (num_cmds == 1 && cmds[0].argv[0] != NULL && is_builtin(cmds[0].argv[0])) {
+    if (!background && num_cmds == 1 &&
+    cmds[0].argv[0] != NULL && is_builtin(cmds[0].argv[0])) {
         int status = run_builtin_in_parent(&cmds[0], state);
         free_commands(cmds, num_cmds);
         return status;
@@ -375,18 +433,243 @@ static int execute_pipeline(const token_t *tokens, shell_state_t *state) {
     }
     for (int i = 0; i < num_cmds; i++) pids[i] = -1;
 
-    int fork_failed = start_stages(cmds, num_cmds, pipes, pids, state) != 0;
+  pid_t pgid = 0;
+
+int fork_failed = start_stages(cmds, num_cmds, pipes, pids,
+                               state, background, &pgid) != 0;
 
     // CRITICAL: Parent closes all pipe ends to prevent deadlocks and allow EOF
     close_pipes(pipes, num_cmds - 1);
 
-    // Reap every child that did start, even if a later fork failed
-    int status = wait_pipeline(pids, num_cmds, cmds[0].argv[0], state);
+
+if (fork_failed) {
+    (void)wait_pipeline(pids, num_cmds,
+                        cmds[0].argv[0], state);
 
     free(pids);
     free_commands(cmds, num_cmds);
-    return fork_failed ? 1 : status;
+    return 1;
 }
+/* Register both foreground and background jobs. */
+int job_id = jobs_add(pgid, pids, num_cmds, line);
+
+if (job_id < 0) {
+    fprintf(stderr, "simpleshell: could not register job\n");
+    kill(-pgid, SIGTERM);
+
+    int status = wait_pipeline(pids, num_cmds,
+                               cmds[0].argv[0], state);
+
+    free(pids);
+    free_commands(cmds, num_cmds);
+    return status;
+}
+
+job_t *job = jobs_find(job_id);
+
+if (background) {
+    printf("[%d] %ld\n", job_id, (long)pgid);
+    fflush(stdout);
+
+    free(pids);
+    free_commands(cmds, num_cmds);
+    return 0;
+}
+
+/* Foreground job: give it the terminal and wait. */
+job_control_give_terminal(pgid);
+
+int status = job_control_wait(job);
+
+job_control_restore_terminal();
+
+if (job->completed_count == job->process_count) {
+    jobs_remove(job_id);
+} else {
+    fprintf(stderr, "\n[%d] Stopped %s\n", job_id, line);
+}
+
+free(pids);
+free_commands(cmds, num_cmds);
+
+return status;
+
+}
+
+static int expand_deferred_status(token_t *tokens, int last_status);
+/* Execute commands separated by ;, &&, and ||. */
+static int execute_command_list(token_t *tokens,
+                                shell_state_t *state,
+                                const char *line) {
+    size_t total = 0;
+
+    while (tokens[total].text != NULL) {
+        total++;
+    }
+
+    if (total == 0) {
+        return 0;
+    }
+
+/* Validate the entire command list before executing anything. */
+for (size_t i = 0; i < total; i++) {
+    int is_list_operator =
+        token_is_op(&tokens[i], ";") ||
+        token_is_op(&tokens[i], "&&") ||
+        token_is_op(&tokens[i], "||");
+
+    if (!is_list_operator) {
+        continue;
+    }
+
+    int previous_is_operator =
+        i == 0 ||
+        token_is_op(&tokens[i - 1], ";") ||
+        token_is_op(&tokens[i - 1], "&&") ||
+        token_is_op(&tokens[i - 1], "||");
+
+    if (previous_is_operator) {
+        fprintf(stderr,
+                "simpleshell: syntax error near unexpected token '%s'\n",
+                tokens[i].text);
+        return 2;
+    }
+
+    if (i == total - 1) {
+        fprintf(stderr,
+                "simpleshell: syntax error near unexpected token 'newline'\n");
+        return 2;
+    }
+}
+
+
+    size_t start = 0;
+    int last_status = 0;
+    int first_command = 1;
+    const char *pending_operator = ";";
+
+    while (start < total) {
+        size_t end = start;
+
+        /* Find the next command-list operator. */
+        while (end < total &&
+               !token_is_op(&tokens[end], ";") &&
+               !token_is_op(&tokens[end], "&&") &&
+               !token_is_op(&tokens[end], "||")) {
+            end++;
+        }
+
+        /* Empty commands are syntax errors. */
+        if (end == start) {
+            fprintf(stderr,
+                    "simpleshell: syntax error near unexpected token '%s'\n",
+                    tokens[start].text);
+            return 2;
+        }
+
+        /* Decide whether this command should execute. */
+        int should_run = first_command ||
+                         strcmp(pending_operator, ";") == 0 ||
+                         (strcmp(pending_operator, "&&") == 0 &&
+                          last_status == 0) ||
+                         (strcmp(pending_operator, "||") == 0 &&
+                          last_status != 0);
+
+        if (should_run) {
+            size_t count = end - start;
+
+            token_t *part = calloc(count + 1, sizeof(token_t));
+            if (!part) {
+                perror("simpleshell: calloc");
+                return 1;
+            }
+
+            int allocation_failed = 0;
+
+            for (size_t i = 0; i < count; i++) {
+                part[i].text = strdup(tokens[start + i].text);
+
+                if (!part[i].text) {
+                    perror("simpleshell: strdup");
+                    allocation_failed = 1;
+                    break;
+                }
+
+                part[i].is_op = tokens[start + i].is_op;
+            }
+
+            if (allocation_failed) {
+                free_tokens(part);
+                return 1;
+            }
+
+            if (expand_deferred_status(part, state->last_status) != 0) {
+    free_tokens(part);
+    return 1;
+}
+
+last_status = execute_pipeline(part, state, line);
+            free_tokens(part);
+
+            state->last_status = last_status;
+
+            if (state->should_exit) {
+                return last_status;
+            }
+        }
+
+        first_command = 0;
+
+        if (end == total) {
+            break;
+        }
+
+        pending_operator = tokens[end].text;
+        start = end + 1;
+
+        if (start == total) {
+            fprintf(stderr,
+                    "simpleshell: syntax error near unexpected token 'newline'\n");
+            return 2;
+        }
+    }
+
+    return last_status;
+}
+
+/* Replace deferred $? markers with the latest command status. */
+static int expand_deferred_status(token_t *tokens, int last_status) {
+    char status_text[32];
+    snprintf(status_text, sizeof(status_text), "%d", last_status);
+
+    for (size_t i = 0; tokens[i].text != NULL; i++) {
+        char *marker;
+
+        while ((marker = strchr(tokens[i].text, '\x1F')) != NULL) {
+            size_t prefix_len = (size_t)(marker - tokens[i].text);
+            size_t suffix_len = strlen(marker + 1);
+            size_t status_len = strlen(status_text);
+
+            char *replacement = malloc(prefix_len + status_len +
+                                       suffix_len + 1);
+            if (!replacement) {
+                perror("simpleshell: malloc");
+                return -1;
+            }
+
+            memcpy(replacement, tokens[i].text, prefix_len);
+            memcpy(replacement + prefix_len, status_text, status_len);
+            memcpy(replacement + prefix_len + status_len,
+                   marker + 1, suffix_len + 1);
+
+            free(tokens[i].text);
+            tokens[i].text = replacement;
+        }
+    }
+
+    return 0;
+}
+
 
 /**
  * Read one line, retrying if a signal interrupts the read.
@@ -428,11 +711,16 @@ int main(void) {
     shell_state_t state = {0, getpid(), 0, 0, isatty(STDIN_FILENO)};
 
     signals_init(state.interactive);
-    if (state.interactive) interactive_init();
+job_control_init();
+
+if (state.interactive) {
+    interactive_init();
+}
 
     while (!state.should_exit) {
         stopped_reap();
-        nread = read_line(&line, &len, &state);
+jobs_reap();
+nread = read_line(&line, &len, &state);
 
         // 1. Handle EOF
         if (nread == -1) {
@@ -464,12 +752,14 @@ int main(void) {
         }
 
         // 5. Execute pipeline / redirections
-        state.last_status = execute_pipeline(tokens, &state);
+        state.last_status = execute_command_list(tokens, &state, line);
         free_tokens(tokens);
     }
 
-    // Never leave suspended children behind (no job control in v1.0)
-    stopped_cleanup();
-    free(line);
-    return state.exit_code;
+   // Clean up background and previously stopped children.
+jobs_cleanup();
+stopped_cleanup();
+
+free(line);
+return state.exit_code;
 }

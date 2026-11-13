@@ -77,7 +77,34 @@ int expand_variable(const char *line, size_t *i, const shell_state_t *state,
  */
 int is_valid_var_name(const char *name);
 
+
+/* jobs.c - Background job management */
+
+typedef struct {
+    int job_id;
+    pid_t pgid;
+    pid_t *pids;
+    int *states;          /* 0 = running, 1 = stopped, 2 = completed */
+    int process_count;
+    int completed_count;
+    int stopped_count;
+    int last_status;
+    char *command;
+} job_t;
+
+int jobs_add(pid_t pgid, const pid_t *pids, int process_count,
+             const char *command);
+void jobs_reap(void);
+void jobs_cleanup(void);
+void jobs_print(void);
+job_t *jobs_find(int job_id);
+void jobs_remove(int job_id);
+
 /* signals.c */
+void job_control_init(void);
+void job_control_give_terminal(pid_t pgid);
+void job_control_restore_terminal(void);
+int job_control_wait(job_t *job);
 
 /**
  * Install the shell's SIGINT/SIGTSTP handlers so Ctrl-C and Ctrl-Z never
@@ -97,7 +124,7 @@ void signals_child_default(void);
  * Tell the signal handler whether the shell is idle at its prompt.
  */
 void signals_set_at_prompt(int at_prompt);
-
+int signals_take_prompt_interrupt(void);
 /**
  * waitpid() for pid, also reporting stops (WUNTRACED) and retrying on EINTR.
  * Returns pid, or -1 on error (message already printed).
