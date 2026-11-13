@@ -28,6 +28,7 @@ The project specification and test plan describe support for:
 Features such as command history, tab completion, shell scripting control structures, and background-job commands are listed as out of scope for version 1.0.
 
 ## Requirements
+- `libreadline-dev` for GNU Readline interactive features (S7)
 
 - Linux/POSIX environment (Ubuntu 22.04 LTS is listed as the primary test environment; WSL2 can also be used)
 - GCC 11+ or a compatible C11 compiler

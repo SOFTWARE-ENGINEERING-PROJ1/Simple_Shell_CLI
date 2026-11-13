@@ -132,4 +132,9 @@ int is_builtin(const char *name);
  */
 int run_builtin(char **argv, shell_state_t *state);
 
+/* interactive.c (S7: History, Reverse Search, Tab Completion) */
+void interactive_init(void);
+char *interactive_read_line(const char *prompt);
+void interactive_add_history(const char *line);
+
 #endif
