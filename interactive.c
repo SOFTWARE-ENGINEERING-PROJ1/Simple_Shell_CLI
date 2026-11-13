@@ -9,9 +9,18 @@
 #include <readline/history.h>
 
 #include "shell.h"
+static int shell_readline_event_hook(void) {
+    if (signals_take_prompt_interrupt()) {
+        rl_replace_line("", 0);
+        rl_on_new_line();
+        rl_redisplay();
+    }
 
+    return 0;
+}
 static const char *BUILTIN_NAMES[] = {
-    "cd", "pwd", "echo", "export", "unset", "help", "exit", NULL
+    "cd", "pwd", "echo", "export", "unset",
+    "help", "jobs", "fg", "bg", "exit", NULL
 };
 
 static char **g_matches = NULL;
@@ -121,7 +130,9 @@ static char **shell_completion(const char *text, int start, int end) {
         /* 2. Deduplicated PATH matches */
         collect_path_executables(text, text_len);
 
-        rl_attempted_completion_over = 1;
+
+
+rl_attempted_completion_over = 1;
         if (g_match_count == 0) return NULL;
         return rl_completion_matches(text, command_generator);
     }
@@ -135,7 +146,8 @@ void interactive_init(void) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     setvbuf(stderr, NULL, _IOLBF, 0);
     rl_attempted_completion_function = shell_completion;
-    rl_catch_signals = 0;
+rl_catch_signals = 0;
+rl_event_hook = shell_readline_event_hook;
     rl_variable_bind("enable-bracketed-paste", "off");
     rl_variable_bind("show-all-if-ambiguous", "on");
     rl_variable_bind("completion-query-items", "0");

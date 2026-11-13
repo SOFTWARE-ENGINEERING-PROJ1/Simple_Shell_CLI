@@ -59,11 +59,20 @@ int token_is_op(const token_t *tok, const char *op) {
  * Return 1 if line[i] starts an unquoted operator: |, <, >, >>, or 2>.
  * "2>" only counts at the start of a word, so `a2>f` is `a2` then `>`.
  */
+
+
 static int starts_operator(const char *line, size_t i, int at_word_start) {
     char c = line[i];
-    if (c == '|' || c == '<' || c == '>') return 1;
+
+    if (c == '|' || c == '<' || c == '>' ||
+        c == '&' || c == ';') {
+        return 1;
+    }
+
     return c == '2' && line[i + 1] == '>' && at_word_start;
 }
+
+
 
 /**
  * Read one token starting at line[*i] into sb.
@@ -97,17 +106,25 @@ static int read_token(const char *line, size_t *i, const shell_state_t *state,
             }
             *is_op = 1;
 
-            // Otherwise, consume the operator token
+
+            // Consume single-character and multi-character operators.
             if (c == '2' && line[*i + 1] == '>') {
                 rc = strbuf_puts(sb, "2>");
                 *i += 2;
             } else if (c == '>' && line[*i + 1] == '>') {
                 rc = strbuf_puts(sb, ">>");
                 *i += 2;
+            } else if (c == '&' && line[*i + 1] == '&') {
+                rc = strbuf_puts(sb, "&&");
+                *i += 2;
+            } else if (c == '|' && line[*i + 1] == '|') {
+                rc = strbuf_puts(sb, "||");
+                *i += 2;
             } else {
                 rc = strbuf_putc(sb, c);
                 (*i)++;
             }
+
             if (rc != 0) return -1;
             break;
         } else if (c == '$' && !in_single) {
