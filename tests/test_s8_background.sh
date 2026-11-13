@@ -3,7 +3,7 @@
 
 set -u
 
-SHELL_BIN="./shell"
+SHELL_BIN="${SHELL_BIN:-./shell}"
 PASS=0
 FAIL=0
 

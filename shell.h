@@ -94,7 +94,7 @@ typedef struct {
 
 int jobs_add(pid_t pgid, const pid_t *pids, int process_count,
              const char *command);
-void jobs_reap(void);
+int jobs_reap(void);
 void jobs_cleanup(void);
 void jobs_print(void);
 job_t *jobs_find(int job_id);
