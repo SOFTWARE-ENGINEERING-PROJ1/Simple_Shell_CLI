@@ -3,7 +3,7 @@
 
 set -u
 
-SHELL_BIN="./shell"
+SHELL_BIN="${SHELL_BIN:-./shell}"
 PASS=0
 FAIL=0
 TMP_DIR=$(mktemp -d)
@@ -111,6 +111,29 @@ check_not_contains "Trailing || is rejected" "$output" "invalid"
 
 output=$(run_shell 'echo invalid ; ; echo invalid2')
 check_not_contains "Repeated separators are rejected" "$output" "invalid2"
+
+
+# Test 9: Invalid adjacent operator runs are rejected before execution.
+for invalid in \
+    'echo FIRST ||| echo SECOND' \
+    'echo FIRST &&& echo SECOND' \
+    'echo FIRST ||& echo SECOND' \
+    'echo FIRST |&& echo SECOND'; do
+    output=$(run_shell "$invalid")
+    check_contains "Invalid operator run is rejected: $invalid" "$output" "syntax error"
+    check_not_contains "Invalid operator run executes no command: $invalid" "$output" "FIRST"
+    check_not_contains "Invalid operator run executes no command: $invalid" "$output" "SECOND"
+done
+
+# Test 10: Validate every list segment before executing the first segment.
+output=$(run_shell 'echo FIRST && echo SECOND | | cat')
+check_contains "Invalid later pipeline is rejected before execution" "$output" "syntax error"
+check_not_contains "Earlier command is not executed when later segment is invalid" "$output" "FIRST"
+check_not_contains "Invalid later pipeline does not execute later command" "$output" "SECOND"
+
+output=$(run_shell 'echo FIRST && echo SECOND >')
+check_contains "Missing redirection target is rejected during pre-validation" "$output" "syntax error"
+check_not_contains "No command executes when a later segment has invalid redirection" "$output" "FIRST"
 
 echo
 echo "US-706 Command Chaining Tests"

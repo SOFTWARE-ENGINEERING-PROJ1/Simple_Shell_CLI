@@ -107,7 +107,8 @@ void jobs_remove(int job_id) {
 }
 
 /* Reap children and update running/stopped/completed states. */
-void jobs_reap(void) {
+int jobs_reap(void) {
+    int completed_jobs = 0;
     for (size_t i = 0; i < job_count; i++) {
         job_t *job = &job_list[i];
 
@@ -157,10 +158,13 @@ void jobs_reap(void) {
                     job_list[i].command);
 
             jobs_remove(job_list[i].job_id);
+            completed_jobs++;
         } else {
             i++;
         }
     }
+
+    return completed_jobs;
 }
 
 /* Display currently running and stopped jobs. */

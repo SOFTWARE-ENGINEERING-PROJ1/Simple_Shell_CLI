@@ -10,8 +10,17 @@
 
 #include "shell.h"
 static int shell_readline_event_hook(void) {
+    /* Readline calls this periodically while waiting at an idle prompt.
+       Reap finished background jobs here so they do not remain zombies
+       until the user enters another command. */
+    int completed_jobs = jobs_reap();
+
     if (signals_take_prompt_interrupt()) {
         rl_replace_line("", 0);
+        rl_on_new_line();
+        rl_redisplay();
+    } else if (completed_jobs > 0) {
+        /* jobs_reap() prints completion notices; restore the active line. */
         rl_on_new_line();
         rl_redisplay();
     }

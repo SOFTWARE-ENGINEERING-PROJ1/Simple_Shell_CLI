@@ -191,6 +191,52 @@ static void free_commands(command_t *cmds, int num_cmds) {
     free(cmds);
 }
 
+/* Validate one command/pipeline segment without executing it. */
+static int validate_pipeline_segment(const token_t *tokens, size_t count) {
+    if (count == 0) {
+        fprintf(stderr,
+                "simpleshell: syntax error near unexpected token 'newline'\n");
+        return -1;
+    }
+
+    /* '&' is supported only once, at the end of a command segment. */
+    for (size_t i = 0; i < count; i++) {
+        if (!token_is_op(&tokens[i], "&")) continue;
+        if (i != count - 1) {
+            fprintf(stderr,
+                    "simpleshell: syntax error near unexpected token '&'\n");
+            return -1;
+        }
+        count--;
+        break;
+    }
+
+    if (count == 0) {
+        fprintf(stderr,
+                "simpleshell: syntax error near unexpected token '&'\n");
+        return -1;
+    }
+
+    token_t *segment = calloc(count + 1, sizeof(*segment));
+    if (!segment) {
+        perror("simpleshell: calloc");
+        return -1;
+    }
+
+    /* The strings remain owned by the original token array. */
+    memcpy(segment, tokens, count * sizeof(*segment));
+    segment[count].text = NULL;
+    segment[count].is_op = 0;
+
+    command_t *commands = NULL;
+    int command_count = parse_pipeline(segment, &commands);
+    free(segment);
+
+    if (command_count < 0) return -1;
+    free_commands(commands, command_count);
+    return 0;
+}
+
 /**
  * Run a single built-in in the shell process (so cd/export/exit affect the
  * shell), applying its redirections and restoring stdio afterwards.
@@ -542,6 +588,28 @@ for (size_t i = 0; i < total; i++) {
     }
 }
 
+/*
+ * Pre-parse every segment, including branches that may later be skipped by
+ * && or ||. No command is allowed to run until the whole input is valid.
+ */
+size_t validation_start = 0;
+while (validation_start < total) {
+    size_t validation_end = validation_start;
+    while (validation_end < total &&
+           !token_is_op(&tokens[validation_end], ";") &&
+           !token_is_op(&tokens[validation_end], "&&") &&
+           !token_is_op(&tokens[validation_end], "||")) {
+        validation_end++;
+    }
+
+    if (validate_pipeline_segment(tokens + validation_start,
+                                  validation_end - validation_start) != 0) {
+        return 2;
+    }
+
+    if (validation_end == total) break;
+    validation_start = validation_end + 1;
+}
 
     size_t start = 0;
     int last_status = 0;

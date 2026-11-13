@@ -61,15 +61,55 @@ int token_is_op(const token_t *tok, const char *op) {
  */
 
 
+static int is_operator_char(char c) {
+    return c == '|' || c == '<' || c == '>' ||
+           c == '&' || c == ';';
+}
+
 static int starts_operator(const char *line, size_t i, int at_word_start) {
     char c = line[i];
 
-    if (c == '|' || c == '<' || c == '>' ||
-        c == '&' || c == ';') {
+    if (is_operator_char(c)) {
         return 1;
     }
 
     return c == '2' && line[i + 1] == '>' && at_word_start;
+}
+
+/*
+ * Reject adjacent operator runs unless the complete run is one supported
+ * two-character operator. This prevents inputs such as |||, &&&, ||&, and
+ * |&& from being split into individually valid tokens.
+ */
+static int read_operator(const char *line, size_t *i, strbuf_t *sb) {
+    size_t start = *i;
+    size_t end = start;
+
+    while (is_operator_char(line[end])) {
+        end++;
+    }
+
+    size_t length = end - start;
+    if (length == 1) {
+        if (strbuf_putc(sb, line[start]) != 0) return -1;
+        *i = end;
+        return 0;
+    }
+
+    if (length == 2 &&
+        ((line[start] == '|' && line[start + 1] == '|') ||
+         (line[start] == '&' && line[start + 1] == '&') ||
+         (line[start] == '>' && line[start + 1] == '>'))) {
+        char op[3] = { line[start], line[start + 1], '\0' };
+        if (strbuf_puts(sb, op) != 0) return -1;
+        *i = end;
+        return 0;
+    }
+
+    fprintf(stderr,
+            "simpleshell: syntax error near unexpected operator '%.*s'\n",
+            (int)length, line + start);
+    return -1;
 }
 
 
@@ -107,22 +147,12 @@ static int read_token(const char *line, size_t *i, const shell_state_t *state,
             *is_op = 1;
 
 
-            // Consume single-character and multi-character operators.
+            /* Consume one complete, validated operator token. */
             if (c == '2' && line[*i + 1] == '>') {
                 rc = strbuf_puts(sb, "2>");
                 *i += 2;
-            } else if (c == '>' && line[*i + 1] == '>') {
-                rc = strbuf_puts(sb, ">>");
-                *i += 2;
-            } else if (c == '&' && line[*i + 1] == '&') {
-                rc = strbuf_puts(sb, "&&");
-                *i += 2;
-            } else if (c == '|' && line[*i + 1] == '|') {
-                rc = strbuf_puts(sb, "||");
-                *i += 2;
             } else {
-                rc = strbuf_putc(sb, c);
-                (*i)++;
+                rc = read_operator(line, i, sb);
             }
 
             if (rc != 0) return -1;
